@@ -4,17 +4,16 @@ using TShockAPI;
 using TerrariaApi.Server;
 using System.Reflection;
 using Wolfje.Plugins.SEconomy;
-using System.Collections.Generic;
-using System.Linq;
 using System.Timers;
+using System.Text;
+using Wolfje.Plugins.SEconomy.Journal;
 
 namespace Autorank
 {
     [ApiVersion(1, 16)]
     public class autorank : TerrariaPlugin
     {
-        System.Timers.Timer t = new System.Timers.Timer(150000) { Enabled =true};
-        public List<Rank> Ranks = new List<Rank>();
+        System.Timers.Timer t = new System.Timers.Timer(300000) { Enabled = true };
         public override Version Version
         {
             get { return Assembly.GetExecutingAssembly().GetName().Version; }
@@ -36,8 +35,14 @@ namespace Autorank
         public override void Initialize()
         {
             Commands.ChatCommands.Add(new Command(CheckRank, "checkrank"));
-            AddRanks();
+            t.Elapsed += OnUpdate;
             t.Start();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { }
+            base.Dispose(disposing);
         }
 
         public autorank(Main game)
@@ -46,82 +51,141 @@ namespace Autorank
             Order = 1;
         }
 
-        private void Onupdate(object sender, ElapsedEventArgs args)
+        private void OnUpdate(object sender, ElapsedEventArgs args)
         {
             foreach (TSPlayer ts in TShock.Players)
             {
-                List<Rank> rnks = Ranks.Where(r => r.CurrentRank == ts.Group.Name).ToList();
-                if (rnks.Count < 1)
+                if (ts.IsLoggedIn)
                 {
-                    return;
-                }
-                Rank rank = rnks[0];
-                var DbUser = TShock.Users.GetUserByName(ts.UserAccountName);
+                    IBankAccount Player = SEconomyPlugin.Instance.GetBankAccount(ts.Index);
 
-                Wolfje.Plugins.SEconomy.Economy.EconomyPlayer EP = SEconomyPlugin.GetEconomyPlayerSafe(ts.Index);
-                if (EP.BankAccount.Balance > rank.Cost)
-                {
-                    TShock.Users.SetUserGroup(DbUser, rank.NextRank);
-                    ts.SendInfoMessage("Congratulations, you gained a rank!");
-                    return;
+
+                    int i;
+                    if (int.TryParse(ts.Group.Name, out i))
+                    {
+                        if (TShock.Groups.GroupExists((i + 1).ToString()))
+                        {
+                            int RankCost = GetXp(i);
+                            if (Player.Balance >= RankCost)
+                            {
+                                int r = GiveItem((i + 1), ts);
+                                if (r > 0)
+                                {
+                                    var DbUser = TShock.Users.GetUserByName(ts.UserAccountName);
+                                    TShock.Users.SetUserGroup(DbUser, (i + 1).ToString());
+                                    ts.SendInfoMessage("Congratulations, you gained a Level!");
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
 
         private void CheckRank(CommandArgs args)
         {
-            List<Rank> rnks = Ranks.Where(r => r.CurrentRank == args.Player.Group.Name).ToList();
-            if (rnks.Count < 1)
+            if (!args.Player.IsLoggedIn)
             {
-                args.Player.SendErrorMessage("No higher rank available!");
+                args.Player.SendErrorMessage("You need to be logged in to use this command!");
                 return;
             }
 
-            Rank rank = rnks[0];
-            Wolfje.Plugins.SEconomy.Economy.EconomyPlayer EP = SEconomyPlugin.GetEconomyPlayerSafe(args.Player.Index);
+            IBankAccount Player = SEconomyPlugin.Instance.GetBankAccount(args.Player.Index);
 
-            if (EP.BankAccount.Balance < rank.Cost)
+            int i;
+            if (int.TryParse(args.Player.Group.Name, out i))
             {
-                Money m = rank.Cost - EP.BankAccount.Balance;
-                args.Player.SendMessage(string.Format("You need {0} more Goldpieces for rank: {1}", m.ToLongString(), rank.NextRank), Color.Cyan);
+                if (!TShock.Groups.GroupExists((i + 1).ToString()))
+                {
+                    args.Player.SendErrorMessage("No higher level available!");
+                    return;
+                }
+                int RankCost = GetXp(i);
+                if (Player.Balance >= RankCost)
+                {
+                    int r = GiveItem((i + 1), args.Player);
+                    if (r > 0)
+                    {
+                        args.Player.SendErrorMessage("You don't have enough free inventory spaces to receive items!");
+                        args.Player.SendErrorMessage("You need " + r + " more free inventory space(s)!");
+                        return;
+                    }
+                    var DbUser = TShock.Users.GetUserByName(args.Player.UserAccountName);
+                    TShock.Users.SetUserGroup(DbUser, (i + 1).ToString());
+                    args.Player.SendInfoMessage("Congratulations, you gained a Level!");
+                    return;
+                }
+                else
+                {
+                    Money m = RankCost - Player.Balance;
+                    args.Player.SendMessage(string.Format("You need {0} more XP for Level: {1}", m.ToLongString(), (i + 1).ToString()), Color.Cyan);
+                    return;
+
+                }
+            }
+            else
+            {
+                args.Player.SendErrorMessage("You can't use this command!");
                 return;
             }
-            var DbUser = TShock.Users.GetUserByName(args.Player.UserAccountName);
-            TShock.Users.SetUserGroup(DbUser, rank.NextRank);
-            args.Player.SendInfoMessage("Congratulations, you gained a rank!");
         }
 
-        protected override void Dispose(bool disposing)
+        public int GiveItem(int rank, TSPlayer plr)
         {
-            if (disposing) {}
-            base.Dispose(disposing);
-        }
-
-        public void AddRanks()
-        {
-            Ranks.Add(new Rank("1", "2", 1800)); //20min
-            Ranks.Add(new Rank("2", "3", 11564)); //40min
-            Ranks.Add(new Rank("3", "4", 26453)); //1,3hr
-            Ranks.Add(new Rank("4", "5", 46432)); //2,6hr
-            Ranks.Add(new Rank("5", "6", 64321)); //5,2hr
-            Ranks.Add(new Rank("6", "7", 94354)); //10,4hr
-            Ranks.Add(new Rank("7", "8", 153489)); //20,8hr
-            Ranks.Add(new Rank("8", "9", 315643));// 1,7 day
-            Ranks.Add(new Rank("9", "10", 437832)); //3,4 day
-            Ranks.Add(new Rank("10", "11", 584106)); //6,8 day
-        }
-
-        public class Rank
-        {
-            public string CurrentRank = "";
-            public string NextRank = "";
-            public int Cost = 0;
-            public Rank(string currentrank, string nextrank, int cost)
+            switch (rank)
             {
-                CurrentRank = currentrank;
-                NextRank = nextrank;
-                Cost = cost;
+                case 50:
+                case 100:
+                    return GiveItem(plr, GetItem(1, 5), GetItem(2, 5));
+                case 150:
+                    return GiveItem(plr, GetItem(6, 2), GetItem(9, 5), GetItem(5, 100));
+                default:
+                    return 0;
             }
+        }
+
+        public Item GetItem(int id, int stack)
+        {
+            Item it = new Item();
+            it.SetDefaults(id);
+            it.stack = stack > it.maxStack ? it.maxStack : stack;
+            return it;
+        }
+
+        public int GiveItem(TSPlayer plr, params Item[] Items)
+        {
+            int EmptySlots = 0;
+
+            for (int i = 0; i < 50; i++) //51 is trash can, 52-55 is coins, 56-59 is ammo
+            {
+                if (plr.TPlayer.inventory[i] == null || !plr.TPlayer.inventory[i].active || plr.TPlayer.inventory[i].name == "")
+                {
+                    EmptySlots++;
+                }
+            }
+
+            if (EmptySlots < Items.Length)
+                return Items.Length - EmptySlots;
+
+            StringBuilder sb = new StringBuilder();
+
+            for (int i = 0; i < Items.Length; i++)
+            {
+                plr.GiveItemCheck(Items[i].type, Items[i].name, Items[i].width, Items[i].height, Items[i].stack, Items[i].prefix);
+
+                sb.Append(Items[i].name + " (" + Items[i].stack + ")");
+                if(i != Items.Length-1)
+                    sb.Append(",");
+            }
+
+            plr.SendInfoMessage("You have received the following item(s) for ranking up:");
+            plr.SendInfoMessage(sb.ToString());
+            return 0;
+        }
+
+        public static int GetXp(int level)
+        {
+            return (int)((level * level) / 7.331 * 1337.0f * 1.337f);
         }
     }
 }
